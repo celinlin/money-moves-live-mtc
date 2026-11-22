@@ -5,6 +5,8 @@ import path from 'node:path';
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  // NEXT_PUBLIC_* lets the Vercel ↔ Supabase integration's variables work without renaming.
+  envPrefix: ['VITE_', 'NEXT_PUBLIC_'],
   resolve: { alias: { '@': path.resolve(__dirname, 'src') } },
   server: { host: true, port: 5173 },
   preview: { host: true, port: 4173 },
