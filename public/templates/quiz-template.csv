@@ -1,0 +1,4 @@
+question,type,multiple,time_limit,answer_1,answer_2,answer_3,answer_4,answer_5,answer_6,answer_7,answer_8,correct,explanation,image_url
+Que signifie « ETF » ?,quiz,,20,Exchange Traded Fund,European Tax Fund,Equity Transfer Fee,Electronic Trading Fund,,,,,1,Un fonds coté qui réplique un indice.,
+As-tu déjà investi ?,poll,,30,"Oui, régulièrement","Oui, une fois ou deux",Pas encore mais je veux,Non,,,,,,,
+Tu as ouvert quoi ?,poll,true,30,Livret A,PEA,Compte-titres,Assurance-vie,PER,Crypto,Rien encore,,,,

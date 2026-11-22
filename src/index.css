@@ -1,0 +1,101 @@
+@import "tailwindcss";
+
+/* Design tokens — taken from the existing Money Talks club identity:
+   deep plum background, lime-cream text, gold accent, Playfair italic. */
+@theme static {
+  --color-bg: oklch(16% 0.045 355);
+  --color-bg-raised: oklch(20% 0.05 355);
+  --color-fg: oklch(91% 0.06 110);
+  --color-cream: oklch(91% 0.04 90);
+  --color-muted: oklch(78% 0.04 60);
+  --color-subtle: oklch(60% 0.04 20);
+  --color-gold: oklch(72% 0.11 80);
+  --color-gold-soft: oklch(72% 0.11 80 / 0.16);
+  --color-plum: oklch(42% 0.1 355);
+  --color-plum-deep: oklch(26% 0.07 355);
+  --color-olive: oklch(62% 0.09 120);
+  --color-blush: oklch(92% 0.04 0);
+  --color-danger: oklch(68% 0.17 25);
+  --color-success: oklch(74% 0.13 145);
+  --color-line: oklch(100% 0 0 / 0.1);
+  --color-card: oklch(100% 0 0 / 0.05);
+  --color-track: oklch(100% 0 0 / 0.07);
+
+  /* Answer accents: consistent per position on phones, stage and results. */
+  --color-opt-0: oklch(74% 0.12 80);
+  --color-opt-1: oklch(70% 0.13 22);
+  --color-opt-2: oklch(68% 0.1 140);
+  --color-opt-3: oklch(70% 0.09 255);
+  --color-opt-4: oklch(72% 0.12 335);
+  --color-opt-5: oklch(76% 0.08 190);
+  --color-opt-6: oklch(74% 0.1 50);
+  --color-opt-7: oklch(82% 0.06 110);
+
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", "Helvetica Neue", Arial, sans-serif;
+  --font-serif: "Playfair Display", Georgia, serif;
+
+  --radius-xl: 1.25rem;
+  --radius-2xl: 1.75rem;
+
+  --animate-float: float 3.2s ease-in-out infinite;
+  @keyframes float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-8px); }
+  }
+}
+
+@layer base {
+  html, body, #root {
+    min-height: 100%;
+  }
+  html {
+    background: var(--color-bg);
+    color-scheme: dark;
+  }
+  body {
+    background: var(--color-bg);
+    color: var(--color-fg);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -webkit-tap-highlight-color: transparent;
+    text-rendering: optimizeLegibility;
+  }
+  ::selection {
+    background: var(--color-gold);
+    color: var(--color-bg);
+  }
+  button {
+    cursor: pointer;
+  }
+  button:disabled {
+    cursor: not-allowed;
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-gold);
+    outline-offset: 2px;
+  }
+}
+
+@layer components {
+  .glow-bg {
+    background:
+      radial-gradient(60% 50% at 85% 0%, oklch(30% 0.09 355 / 0.55), transparent 70%),
+      radial-gradient(50% 40% at 0% 100%, oklch(28% 0.07 60 / 0.25), transparent 70%),
+      var(--color-bg);
+  }
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: oklch(100% 0 0 / 0.15) transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
