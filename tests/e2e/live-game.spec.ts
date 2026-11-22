@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import pg from 'pg';
 import { expect, test, type Browser, type BrowserContext, type Page } from '@playwright/test';
 
 const SHOTS = 'test-results/screens';
@@ -8,13 +9,32 @@ async function newPhone(browser: Browser) {
   return { ctx, page: await ctx.newPage() };
 }
 
+function localEnv(name: string) {
+  const line = readFileSync('.env.local', 'utf8').split('\n').find((l) => l.startsWith(`${name}=`));
+  return process.env[name] ?? line?.slice(name.length + 1).trim();
+}
+
+/** The platform is already claimed, so new presenters are created and allow-listed by the owner. */
 async function signUpHost(page: Page) {
   const email = `host-${Date.now()}-${Math.random().toString(36).slice(2, 6)}@test.local`;
+  const password = 'motdepasse-solide';
+  const res = await fetch(`${localEnv('VITE_SUPABASE_URL')}/auth/v1/signup`, {
+    method: 'POST',
+    headers: { apikey: localEnv('VITE_SUPABASE_ANON_KEY')!, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  });
+  expect(res.ok).toBe(true);
+  const db = new pg.Client({ connectionString: process.env.DATABASE_URL ?? 'postgresql://postgres:postgres@127.0.0.1:54322/postgres' });
+  await db.connect();
+  await db.query('insert into public.app_hosts (user_id) select id from auth.users where email = $1 on conflict do nothing', [email]);
+  await db.end();
+
   await page.goto('/host');
-  await page.getByRole('button', { name: /Créer un compte/ }).click();
+  // Sign-up is no longer offered once the platform has an owner.
+  await expect(page.getByRole('button', { name: /Créer un compte/ })).toHaveCount(0);
   await page.getByLabel('Email').fill(email);
-  await page.getByLabel('Mot de passe').fill('motdepasse-solide');
-  await page.getByRole('button', { name: 'Créer mon compte' }).click();
+  await page.getByLabel('Mot de passe').fill(password);
+  await page.getByRole('button', { name: 'Se connecter' }).click();
   await expect(page.getByRole('heading', { name: 'Mes quiz' })).toBeVisible();
 }
 

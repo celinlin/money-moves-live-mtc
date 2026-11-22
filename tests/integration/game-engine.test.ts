@@ -70,7 +70,7 @@ describe('quiz management', () => {
 
   it('refuses anonymous users and other hosts', async () => {
     const anon = await createUser(true);
-    await expectError(rpc(anon, 'save_quiz', { p_quiz_id: null, p_quiz: quizDoc() }), 'NOT_AUTHORIZED');
+    await expectError(rpc(anon, 'save_quiz', { p_quiz_id: null, p_quiz: quizDoc() }), 'permission denied');
     await expectError(rpc(otherHost, 'save_quiz', { p_quiz_id: quizId, p_quiz: quizDoc() }), 'QUIZ_NOT_FOUND');
     const visible = await as(otherHost, 'select id from public.quizzes where id = $1', [quizId]);
     expect(visible).toHaveLength(0);
@@ -102,8 +102,8 @@ describe('session lifecycle', () => {
     expect(JSON.stringify(s.public_state)).not.toContain('is_correct');
 
     const player = await createUser(true);
-    const snap = await as(player, 'select * from public.session_questions where session_id = $1', [s.id]);
-    expect(snap).toHaveLength(0); // participants cannot read the answer key
+    // Participants cannot read the answer key.
+    await expectError(as(player, 'select * from public.session_questions where session_id = $1', [s.id]), 'permission denied');
     const hostSnap = await as(host, 'select * from public.session_questions where session_id = $1', [s.id]);
     expect(hostSnap).toHaveLength(3);
 
@@ -307,7 +307,7 @@ describe('session lifecycle', () => {
     await expectError(act(s.id, 'leaderboard'), 'INVALID_TRANSITION');
     await expectError(
       rpc(p.user, 'host_action', { p_session_id: s.id, p_action: 'finish', p_expected_version: null, p_args: {} }),
-      'NOT_AUTHORIZED',
+      'permission denied',
     );
     await expectError(
       rpc(otherHost, 'host_action', { p_session_id: s.id, p_action: 'finish', p_expected_version: null, p_args: {} }),
@@ -322,10 +322,16 @@ describe('session lifecycle', () => {
     await rpc(players[0].user, 'submit_answer', {
       p_session_id: s.id, p_question_index: 0, p_option_ids: [opened.public_state.question.options[0].id],
     });
-    const answers = await as(players[0].user, 'select * from public.submitted_answers where session_id = $1', [s.id]);
-    expect(answers).toHaveLength(0);
-    const others = await as(players[0].user, 'select id from public.participants where session_id = $1', [s.id]);
-    expect(others).toHaveLength(1); // only self
+    // Phones use the public role: no direct access to answers or participants at all.
+    await expectError(as(players[0].user, 'select * from public.submitted_answers where session_id = $1', [s.id]), 'permission denied');
+    await expectError(as(players[0].user, 'select id from public.participants where session_id = $1', [s.id]), 'permission denied');
+    // A forged / missing token is rejected.
+    await expectError(
+      rpc(players[1].user, 'submit_answer', { p_session_id: s.id, p_question_index: 0, p_option_ids: [opened.public_state.question.options[0].id], p_token: 'x'.repeat(64) }),
+      'NOT_A_PARTICIPANT',
+    );
+    const forged = await rpc(players[1].user, 'player_state', { p_session_id: s.id, p_token: 'y'.repeat(64) });
+    expect(forged.joined).toBe(false);
     await expectError(
       as(players[0].user, 'update public.participants set total_score = 99999 where session_id = $1', [s.id]),
       'permission denied',

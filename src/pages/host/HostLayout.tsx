@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import { LogOut } from 'lucide-react';
 import { Wordmark } from '@/components/brand/Wordmark';
@@ -6,13 +6,43 @@ import { Button } from '@/components/ui/button';
 import { Input, Label } from '@/components/ui/input';
 import { FullPageSpinner } from '@/components/ui/misc';
 import { useAuth } from '@/hooks/useAuth';
-import { supabase } from '@/lib/supabase';
+import { rpc, supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
+
+type Access = 'checking' | 'granted' | 'denied';
+
+/** Server-side allow-list check: being signed in is not enough to be a presenter. */
+function useHostAccess(userId: string | undefined) {
+  const [access, setAccess] = useState<Access>('checking');
+  useEffect(() => {
+    if (!userId) return;
+    let alive = true;
+    setAccess('checking');
+    (async () => {
+      try {
+        const status = await rpc<{ is_host: boolean; can_claim: boolean }>('host_status');
+        let ok = status.is_host;
+        // The very first presenter claims the platform; afterwards access is by invitation only.
+        if (!ok && status.can_claim) ok = await rpc<boolean>('claim_first_host');
+        if (alive) setAccess(ok ? 'granted' : 'denied');
+      } catch {
+        if (alive) setAccess('denied');
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [userId]);
+  return access;
+}
 
 export default function HostLayout() {
   const { isHost, loading, user } = useAuth();
+  const access = useHostAccess(isHost ? user?.id : undefined);
   if (loading) return <FullPageSpinner />;
   if (!isHost) return <HostLogin />;
+  if (access === 'checking') return <FullPageSpinner />;
+  if (access === 'denied') return <AccessDenied email={user?.email} />;
   return (
     <div className="glow-bg min-h-dvh">
       <header className="sticky top-0 z-30 border-b border-line bg-bg/80 backdrop-blur">
@@ -51,8 +81,31 @@ export default function HostLayout() {
   );
 }
 
+function AccessDenied({ email }: { email?: string }) {
+  return (
+    <main className="glow-bg flex min-h-dvh flex-col items-center justify-center px-5 text-center">
+      <div className="w-full max-w-sm rounded-3xl bg-card p-8 ring-1 ring-line">
+        <Wordmark />
+        <h1 className="mt-6 text-2xl font-semibold">Accès réservé</h1>
+        <p className="mt-2 text-sm text-muted">
+          Le compte {email ? <b className="text-fg">{email}</b> : 'connecté'} n’est pas autorisé à animer des parties. Demande à
+          l’administratrice de la plateforme de t’ajouter.
+        </p>
+        <Button className="mt-6 w-full" variant="secondary" onClick={() => void supabase.auth.signOut()}>
+          Se déconnecter
+        </Button>
+      </div>
+    </main>
+  );
+}
+
 function HostLogin() {
-  const allowSignup = import.meta.env.VITE_ALLOW_HOST_SIGNUP !== 'false';
+  const [signupOpen, setSignupOpen] = useState(false);
+  useEffect(() => {
+    // Account creation is only offered while the platform has no presenter yet.
+    supabase.rpc('host_signup_open').then(({ data }) => setSignupOpen(data === true));
+  }, []);
+  const allowSignup = import.meta.env.VITE_ALLOW_HOST_SIGNUP !== 'false' && signupOpen;
   const [mode, setMode] = useState<'signin' | 'signup'>('signin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');

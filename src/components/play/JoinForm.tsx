@@ -2,13 +2,15 @@ import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { friendlyError } from '@/lib/errors';
-import { ensureSession, rpc } from '@/lib/supabase';
+import { playerToken, saveIdentity, sessionIdForPin } from '@/lib/playerIdentity';
+import { rpc } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
 
 export interface JoinResult {
   session_id: string;
   participant_id: string;
   nickname: string;
+  token: string;
   rejoined: boolean;
 }
 
@@ -30,13 +32,12 @@ export function JoinForm({ pin, onJoined }: { pin?: string; onJoined: (res: Join
     setLoading(true);
     setError(null);
     try {
-      await ensureSession();
-      const res = await rpc<JoinResult>('join_session', { p_pin: cleanCode, p_nickname: nickname.trim() });
-      try {
-        localStorage.setItem(`mml-session:${cleanCode}`, res.session_id);
-      } catch {
-        /* private mode */
-      }
+      const res = await rpc<JoinResult>('join_session', {
+        p_pin: cleanCode,
+        p_nickname: nickname.trim(),
+        p_token: playerToken(sessionIdForPin(cleanCode)),
+      });
+      saveIdentity(cleanCode, res.session_id, res.token);
       onJoined(res, cleanCode);
     } catch (err) {
       setError(friendlyError(err));

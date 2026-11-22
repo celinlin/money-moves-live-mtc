@@ -20,7 +20,7 @@ import { useGameSession } from '@/hooks/useGameSession';
 import { toggleFullscreen, useHostControls, useHostKeyboard } from '@/hooks/useHostControls';
 import { isQuestionStage } from '@/lib/stateMachine';
 import { isMuted, onMutedChange, play, setMuted } from '@/lib/sound';
-import { ensureSession, supabase } from '@/lib/supabase';
+import { supabase } from '@/lib/supabase';
 import type { GameSession, SessionLive } from '@/lib/types';
 import { cn, displayHost, formatPin, joinUrl } from '@/lib/utils';
 
@@ -34,7 +34,6 @@ export default function StagePage() {
     if (sessionId) return;
     let alive = true;
     (async () => {
-      await ensureSession();
       const { data } = await supabase
         .from('game_sessions')
         .select('id')
@@ -64,12 +63,8 @@ export default function StagePage() {
 
 function Stage({ sessionId }: { sessionId: string }) {
   useClockSync();
-  const [authReady, setAuthReady] = useState(false);
-  useEffect(() => {
-    ensureSession().then(() => setAuthReady(true), () => setAuthReady(true));
-  }, []);
-  const { user } = useAuth();
-  const { session, live, notFound, applySession, refetch } = useGameSession(sessionId, { withLive: true, enabled: authReady });
+  const { user, loading: authLoading } = useAuth();
+  const { session, live, notFound, applySession, refetch } = useGameSession(sessionId, { withLive: true, enabled: !authLoading });
   const isHost = Boolean(session && user && !user.is_anonymous && user.id === session.host_id);
   const controls = useHostControls(isHost ? session : null, live, applySession, refetch);
   const [barVisible, setBarVisible] = useState(true);

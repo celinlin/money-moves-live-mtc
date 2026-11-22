@@ -11,7 +11,6 @@ export const supabase: SupabaseClient = createClient(url ?? 'http://localhost:54
   auth: {
     persistSession: true,
     autoRefreshToken: true,
-    // Participants keep their anonymous identity across refreshes/reconnects.
     storageKey: 'mml-auth',
   },
   realtime: {
@@ -19,15 +18,6 @@ export const supabase: SupabaseClient = createClient(url ?? 'http://localhost:54
     heartbeatIntervalMs: 15000,
   },
 });
-
-/** Ensure there is an auth session; participants get a durable anonymous identity. */
-export async function ensureSession() {
-  const { data } = await supabase.auth.getSession();
-  if (data.session) return data.session;
-  const { data: anon, error } = await supabase.auth.signInAnonymously();
-  if (error) throw error;
-  return anon.session!;
-}
 
 /** Call an RPC and throw on error, returning typed data. */
 export async function rpc<T>(fn: string, args?: Record<string, unknown>): Promise<T> {

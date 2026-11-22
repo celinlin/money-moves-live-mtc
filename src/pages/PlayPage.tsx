@@ -23,7 +23,8 @@ import { useGameSession } from '@/hooks/useGameSession';
 import { recordSample } from '@/lib/clock';
 import { errorCode, friendlyError, isNetworkError } from '@/lib/errors';
 import { play, vibrate } from '@/lib/sound';
-import { ensureSession, rpc, supabase } from '@/lib/supabase';
+import { playerToken, sessionIdForPin } from '@/lib/playerIdentity';
+import { rpc, supabase } from '@/lib/supabase';
 import type { GameSession, PlayerState } from '@/lib/types';
 
 type Phase = { kind: 'boot' } | { kind: 'notfound' } | { kind: 'join'; sessionId: string } | { kind: 'game'; sessionId: string } | { kind: 'error'; message: string };
@@ -36,19 +37,14 @@ export default function PlayPage() {
   const boot = useCallback(async () => {
     setPhase({ kind: 'boot' });
     try {
-      await ensureSession();
       const found = await rpc<{ id: string } | null>('lookup_session', { p_pin: pin });
-      let sessionId = found?.id ?? null;
-      if (!sessionId) {
-        // A finished game is no longer joinable, but players who were in it can stay on their results.
-        try {
-          sessionId = localStorage.getItem(`mml-session:${pin}`);
-        } catch {
-          sessionId = null;
-        }
-      }
+      // A finished game is no longer joinable, but players who were in it can stay on their results.
+      const sessionId = found?.id ?? sessionIdForPin(pin);
       if (!sessionId) return setPhase({ kind: 'notfound' });
-      const state = await rpc<PlayerState>('player_state', { p_session_id: sessionId });
+      const token = playerToken(sessionId);
+      const state = token
+        ? await rpc<PlayerState>('player_state', { p_session_id: sessionId, p_token: token })
+        : ({ joined: false } as PlayerState);
       if (state.joined) setPhase({ kind: 'game', sessionId });
       else if (found) setPhase({ kind: 'join', sessionId });
       else setPhase({ kind: 'notfound' });
@@ -122,7 +118,7 @@ function PlayerGame({ sessionId }: { sessionId: string }) {
 
   const fetchPlayer = useCallback(async () => {
     try {
-      const s = await rpc<PlayerState>('player_state', { p_session_id: sessionId });
+      const s = await rpc<PlayerState>('player_state', { p_session_id: sessionId, p_token: playerToken(sessionId) });
       setPlayer(s);
     } catch {
       /* transient; retried on next state change / poll */
@@ -150,7 +146,7 @@ function PlayerGame({ sessionId }: { sessionId: string }) {
   useEffect(() => {
     const beat = async () => {
       const t0 = Date.now();
-      const { data } = await supabase.rpc('heartbeat', { p_session_id: sessionId });
+      const { data } = await supabase.rpc('heartbeat', { p_session_id: sessionId, p_token: playerToken(sessionId) });
       if (data) recordSample(t0, new Date(data as string).getTime(), Date.now());
     };
     void beat();
@@ -203,6 +199,7 @@ function PlayerGame({ sessionId }: { sessionId: string }) {
             p_session_id: session.id,
             p_question_index: questionIndex,
             p_option_ids: optionIds,
+            p_token: playerToken(session.id),
           });
           setLocal({ questionIndex, optionIds: res.selected_option_ids ?? optionIds, status: 'sent' });
           return;

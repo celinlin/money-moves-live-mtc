@@ -37,8 +37,13 @@ async function rpc(client, fn, params) {
 const host = mk();
 const email = `load-${Date.now()}@test.local`;
 {
-  const { error } = await host.auth.signUp({ email, password: 'load-test-password' });
+  const { data, error } = await host.auth.signUp({ email, password: 'load-test-password' });
   if (error) throw error;
+  // Presenters are allow-listed server-side (owner action).
+  const admin = new pg.Client({ connectionString: DB });
+  await admin.connect();
+  await admin.query('insert into public.app_hosts (user_id) values ($1) on conflict do nothing', [data.user.id]);
+  await admin.end();
 }
 const quizDoc = {
   title: `Load test ${new Date().toISOString()}`,
@@ -61,10 +66,10 @@ const joinTimes = [];
 await Promise.all(
   players.map(async (p) => {
     const t0 = t();
-    const { error } = await p.client.auth.signInAnonymously();
-    if (error) throw new Error(`anon sign-in: ${error.message}`);
+    // Phones need no account: join_session issues a device token.
     const res = await rpc(p.client, 'join_session', { p_pin: session.game_pin, p_nickname: `Player ${p.i}` });
     p.participantId = res.participant_id;
+    p.token = res.token;
     joinTimes.push(t() - t0);
   }),
 );
@@ -106,9 +111,9 @@ async function answer(p, row) {
   const ids = q.allow_multiple ? [q.options[p.i % 4].id, q.options[(p.i + 1) % 4].id] : [q.options[p.i % 4].id];
   const t0 = t();
   try {
-    await rpc(p.client, 'submit_answer', { p_session_id: session.id, p_question_index: q.index, p_option_ids: ids });
+    await rpc(p.client, 'submit_answer', { p_session_id: session.id, p_question_index: q.index, p_option_ids: ids, p_token: p.token });
     // Simulate a flaky network: 10% of players retry the same submission.
-    if (p.i % 10 === 0) await rpc(p.client, 'submit_answer', { p_session_id: session.id, p_question_index: q.index, p_option_ids: ids });
+    if (p.i % 10 === 0) await rpc(p.client, 'submit_answer', { p_session_id: session.id, p_question_index: q.index, p_option_ids: ids, p_token: p.token });
     submitTimes.push(t() - t0);
   } catch (e) {
     p.errors.push(e.message);

@@ -2,7 +2,7 @@
 
 A real-time live quiz and poll app, Kahoot-style, in the visual identity of *Money Talks club*.
 
-- **Participants** join from their phone by scanning the single QR code shown in the lobby, then type their first name. There's no account and no email.
+- **Participants** join from their phone by scanning the single QR code shown in the lobby, then type their first name. There's no account and no email: the server gives each phone a secret token for that game.
 - **The presenter** runs the game from a control room (`/host/session/:id`) or directly from the projected screen (`/stage/:code`). The stage has a discreet control bar: ← · pause · **primary action (Space)** · progress · timer · Terminer · Réinitialiser.
 - **Two question types**:
   - *Quiz*: one correct answer, scored, counts toward the leaderboard.
@@ -18,7 +18,7 @@ Everything is real multiplayer. The server is authoritative for the timer, trans
 React + Vite + TypeScript + Tailwind v4 (shadcn-style components on Radix) + Framer Motion
         │  supabase-js (RPC + Realtime postgres_changes)
         ▼
-Supabase: Postgres + RLS + Realtime + Auth (email hosts, anonymous players) + Storage (images)
+Supabase: Postgres + RLS + Realtime + Auth (presenters only) + Storage (images)
 ```
 
 **Why plain Postgres functions rather than Edge Functions?** Every sensitive action (`join_session`, `submit_answer`, `host_action`, `tick_session`…) is a `SECURITY DEFINER` PL/pgSQL function. Each one runs in a single transaction, right next to the data, with row locks:
@@ -39,7 +39,7 @@ Supabase: Postgres + RLS + Realtime + Auth (email hosts, anonymous players) + St
 | Recovery | Snapshot on load and on every (re)subscription, a safety poll (10 s when healthy, 2 s when degraded), and immediate resync on `visibilitychange` / `online`. |
 | Timer | The server stores `question_deadline_at`. Clients estimate the server clock offset (NTP-style) and display `deadline − serverNow`. Pause saves the remaining time; resume computes a new deadline. |
 | Automatic close | `tick_session()`: when the deadline passes (+500 ms grace) or everyone has answered, the host or stage asks the server, which checks its own clock. Phones also ask, with a delay, so the game keeps going even if the presenter's tab crashes. |
-| Identity | Supabase anonymous auth, persisted in the browser. Refreshing or losing the network gives back the same participant, the same score and the right screen. |
+| Identity | When a player joins, the server issues a random 244-bit token, sends it once, and stores only its SHA-256 hash. The token is kept on the phone. Refreshing or losing the network gives back the same participant, the same score and the right screen. Phones don't need a Supabase account, so there's no Auth rate limit per IP: an entire room on the same Wi-Fi can join at once. |
 | Late joiners | They watch the question in progress and play from the next one. |
 | Confidentiality | Correct answers and future questions never leave the server before the reveal. `submit_answer` doesn't return whether the answer is correct, and scores are only added at the reveal. |
 
@@ -54,7 +54,7 @@ Tie-breaks, in order: score ↓, correct answers ↓, total time on correct answ
 
 ```
 supabase/
-  config.toml                      local config (anonymous sign-ins enabled, raised rate limits)
+  config.toml                      local Supabase config
   migrations/
     20261122000100_schema.sql      tables, RLS, realtime publication, images bucket
     20261122000200_game_engine.sql state machine, scoring, RPCs, privileges
@@ -85,8 +85,9 @@ public/templates/quiz-template.csv CSV import template
 
 | Variable | Required | Description |
 |---|---|---|
-| `VITE_SUPABASE_URL` | yes | Your Supabase project URL |
-| `VITE_SUPABASE_ANON_KEY` | yes | Public **anon / publishable** key. Never the `service_role` key. |
+| `VITE_SUPABASE_URL` (or `NEXT_PUBLIC_SUPABASE_URL`) | yes | Your Supabase project URL. The Vercel ↔ Supabase integration sets it automatically. |
+| `VITE_SUPABASE_ANON_KEY` (or `NEXT_PUBLIC_SUPABASE_ANON_KEY`) | yes | Public **anon / publishable** key. Never the `service_role` key. |
+| `POSTGRES_URL_NON_POOLING` | build only | Used by `scripts/migrate.mjs` to apply migrations during the Vercel build. Set by the integration; never sent to the browser. |
 | `VITE_PUBLIC_APP_URL` | recommended | Public URL encoded in the QR code (e.g. `https://quiz.example.com`). Defaults to the current origin. |
 | `VITE_ALLOW_HOST_SIGNUP` | no | `false` hides the "Créer un compte" link (see security notes). |
 
@@ -130,41 +131,49 @@ Then:
 
 ## Deployment (Supabase Cloud + Vercel)
 
-### 1. Supabase
-1. Create a project at [supabase.com](https://supabase.com). Choose the region closest to your audience.
-2. Apply the migrations:
+This is the setup used in production.
 
-   ```bash
-   supabase login
-   ```
+1. Import the GitHub repo into Vercel. `vercel.json` already sets up the Vite build, the SPA rewrite and the security headers.
+2. In Vercel, go to **Storage → Create Database → Supabase** and connect it to the project. The integration injects the variables automatically.
+3. Deploy. **Database migrations are applied automatically during the build** (`scripts/migrate.mjs`): each migration runs once and is tracked in `public._mml_migrations`.
+4. In Supabase, go to *Authentication → URL Configuration* and set the Site URL to the Vercel domain. You can also turn off *Confirm email* for the presenter account.
+5. Open `https://<domain>/host` and create your account. **The first account created becomes the owner of the platform.** After that, the « Créer un compte » link disappears and nobody else can become a presenter.
 
-   ```bash
-   supabase link --project-ref <ref>
-   ```
+Players need **no Auth setting** (anonymous sign-ins can stay off).
 
-   ```bash
-   supabase db push
-   ```
+### Adding another presenter
+That person creates an account (temporarily re-enable sign-up in Supabase if needed, or create the user from *Authentication → Users*). Then, in Supabase's SQL Editor:
+```sql
+insert into public.app_hosts (user_id) select id from auth.users where email = 'person@example.com';
+```
 
-3. **Authentication → Sign In / Providers**: enable **Anonymous sign-ins**. This is required for participants.
-4. **Authentication → Rate Limits**: raise **anonymous sign-ins per hour per IP** (default 30) to at least **500**. ⚠️ At a live event every phone shares the venue Wi-Fi's IP address; the default limit would block anyone after the 30th participant.
-5. **Authentication → URL Configuration**: set *Site URL* to your Vercel domain.
-6. Email/password provider: keep it enabled for presenters.
-7. Realtime: the migration adds the tables to the `supabase_realtime` publication. Check your plan's quotas (concurrent connections and messages per second). For an event with 100+ people, a paid plan gives comfortable headroom.
-
-### 2. Vercel
-1. Import the repo. `vercel.json` already sets up the Vite build and the SPA rewrite.
-2. Add the environment variables (`VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `VITE_PUBLIC_APP_URL`).
-3. Deploy, then create your presenter account at `https://<domain>/host`.
-4. **After that**: in Supabase, disable new sign-ups (*Authentication → Sign In / Providers → Allow new users to sign up*), and set `VITE_ALLOW_HOST_SIGNUP=false`. Anonymous sign-ins for participants stay active.
+### Without the Vercel integration
+Create a Supabase project, then either run `supabase link` followed by `supabase db push`, or paste `supabase/setup.sql` into the SQL Editor. Then set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` in Vercel.
 
 ### Before the event (checklist)
 - [ ] Use the quiz editor's preview (**Aperçu** button) to check every question, the correct answer, the timer and images.
 - [ ] Run a test game with 2–3 phones on the venue's Wi-Fi.
-- [ ] Anonymous rate limit raised (step 1.4).
 - [ ] Stage open in fullscreen (F). Sound can be toggled with the speaker icon.
 
 ---
+
+## Security
+
+| Area | Measure |
+|---|---|
+| Presenters | Server-side allow-list (`app_hosts`). The first account claims the platform once (serialised with a lock). A signed-in but unlisted account sees « Accès réservé » and the database refuses every presenter action. |
+| Players | Token per session, stored hashed. A token is worthless in another session. Players only have access to the RPCs `join_session`, `player_state`, `submit_answer` and `heartbeat`, and only for their own participant. |
+| Data | RLS on every table. The public role has **no** access to quizzes, questions, the answer key, participants or answers. It sees only `public_state` for live sessions (and for 12 h after the end, so the stage can show the podium). That state never contains future questions or unrevealed answers. |
+| Scoring | Computed entirely on the server. Correctness and points aren't returned before the reveal, and totals are recalculated, never incremented. |
+| Privileges | Every write goes through `SECURITY DEFINER` functions with a pinned `search_path` and explicit checks. TRUNCATE, TRIGGER and REFERENCES are revoked, and internal functions aren't callable by users. |
+| Secrets | Only the public anon key reaches the browser (checked in the deployed bundle). Database credentials stay in Vercel, used by the build. |
+| HTTP | Strict CSP (`script-src 'self'`), `frame-ancestors 'none'` / `X-Frame-Options: DENY`, `nosniff`, `Referrer-Policy`, `Permissions-Policy`, HSTS. |
+| Storage | Image bucket is public read-only by URL, can't be listed, uploads only by presenters into their own folder (images ≤ 5 MB). |
+| Dependencies | `npm audit --omit=dev`: 0 known vulnerabilities (React Router upgraded to v7). |
+
+Accepted risks (documented):
+- A game code (6 digits) can be guessed. This is inherent to the format, as with Kahoot. The presenter can remove an unwanted participant, and each session is capped at 1,000 participants.
+- Join requests aren't protected by a CAPTCHA, to keep entry instant.
 
 ## Usage
 
@@ -209,7 +218,7 @@ Unit tests: 29.
 npm run test:db
 ```
 
-Integration tests: 17. Requires `supabase start`.
+Integration tests: 26 (game engine + security). Requires `supabase start`.
 
 ```bash
 npm run test:e2e
@@ -228,7 +237,7 @@ Load test against the local stack.
 | Suite | Result |
 |---|---|
 | Unit (Vitest) | **29/29** ✅ |
-| Integration (real Postgres + RLS) | **17/17** ✅ |
+| Integration (real Postgres + RLS + security) | **26/26** ✅ |
 | E2E (Playwright: host + stage + 3 phones) | **1/1** ✅ |
 | Load test, 100 players × 4 questions | **PASS** ✅ |
 
@@ -245,8 +254,8 @@ The E2E test covers:
 8. Close at the end of the timer, then podium → full leaderboard → recap.
 9. Results page and CSV export.
 
-Load test, 100 real players (100 anonymous identities and 100 WebSockets):
-- Realtime latency from presenter action to each phone: **p50 144 ms, p95 198 ms** (1,600 deliveries; 0 players missed a state).
+Load test, 100 real players (100 tokens and 100 WebSockets):
+- Realtime latency from presenter action to each phone: **p50 128 ms, p95 237 ms** (1,600 deliveries; 0 players missed a state).
 - Answer submission: p50 4 ms.
 - 400/400 answers stored, **0 duplicates** (10% of players deliberately submit twice), **0 score discrepancies**, 100/100 unique ranks.
 
